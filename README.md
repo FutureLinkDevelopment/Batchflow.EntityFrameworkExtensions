@@ -14,7 +14,20 @@ The goal of this project is to provide an internal-first, PostgreSQL-first alter
 
 - `src/Batchflow.EntityFrameworkExtensions` contains the library
 - `tests/Batchflow.EntityFrameworkExtensions.Tests` contains unit tests
+- `benchmarks/Batchflow.EntityFrameworkExtensions.Benchmarks` contains BenchmarkDotNet performance benchmarks
 
 ## Current status
 
 The repository has been bootstrapped with package metadata, configuration primitives, and initial tests. Execution logic has not been implemented yet.
+
+## Benchmarks
+
+The repository includes a standalone benchmark project for measuring the current tracked EF-style upsert and full-snapshot synchronization baselines.
+
+Run it with:
+
+```bash
+dotnet run -c Release --project benchmarks/Batchflow.EntityFrameworkExtensions.Benchmarks/Batchflow.EntityFrameworkExtensions.Benchmarks.csproj
+```
+
+The benchmark project is a separate executable and is not included when packing `src/Batchflow.EntityFrameworkExtensions/Batchflow.EntityFrameworkExtensions.csproj`.
