@@ -1,0 +1,13 @@
+bin/
+obj/
+.vs/
+.idea/
+.vscode/
+TestResults/
+*.user
+*.suo
+*.ncrunch*
+*.snk
+*.coverage
+*.coveragexml
+artifacts/

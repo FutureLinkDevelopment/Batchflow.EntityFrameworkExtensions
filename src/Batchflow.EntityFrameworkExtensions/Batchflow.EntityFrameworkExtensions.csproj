@@ -1,0 +1,26 @@
+﻿<Project Sdk="Microsoft.NET.Sdk">
+
+  <PropertyGroup>
+    <TargetFramework>net8.0</TargetFramework>
+    <ImplicitUsings>enable</ImplicitUsings>
+    <Nullable>enable</Nullable>
+    <GenerateDocumentationFile>true</GenerateDocumentationFile>
+    <PackageId>Batchflow.EntityFrameworkExtensions</PackageId>
+    <Title>Batchflow Entity Framework Extensions</Title>
+    <Description>Standalone bulk operations library for Entity Framework, tailored for BatchFlow import and synchronization workloads.</Description>
+    <PackageTags>entityframework;efcore;bulk;upsert;postgresql;batchflow</PackageTags>
+    <PackageReadmeFile>README.md</PackageReadmeFile>
+    <Authors>BatchFlow</Authors>
+    <Company>BatchFlow</Company>
+    <PackageRequireLicenseAcceptance>false</PackageRequireLicenseAcceptance>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <PackageReference Include="Microsoft.EntityFrameworkCore" Version="8.0.23" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <None Include="README.md" Pack="true" PackagePath="\" />
+  </ItemGroup>
+
+</Project>
