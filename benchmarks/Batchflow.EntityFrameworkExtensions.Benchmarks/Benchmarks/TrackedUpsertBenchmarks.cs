@@ -1,3 +1,4 @@
+using Batchflow.EntityFrameworkExtensions;
 using BenchmarkDotNet.Attributes;
 using Microsoft.Data.Sqlite;
 using Microsoft.EntityFrameworkCore;
@@ -107,6 +108,17 @@ public class TrackedUpsertBenchmarks
         }
 
         await dbContext.SaveChangesAsync();
+    }
+
+    [Benchmark]
+    public async Task PackageBulkMerge()
+    {
+        var entities = BenchmarkDataFactory.CreateMixedBatch(BatchSize);
+
+        await using var dbContext = CreateDbContext();
+        await dbContext.BulkMergeAsync(
+            entities,
+            options => options.KeyProperties.Add(nameof(BulkEntity.ImportKey)));
     }
 
     private BulkBenchmarkDbContext CreateDbContext()

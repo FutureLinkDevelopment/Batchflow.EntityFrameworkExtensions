@@ -1,4 +1,5 @@
 using Batchflow.EntityFrameworkExtensions.Abstractions;
+using Batchflow.EntityFrameworkExtensions.Internal;
 using Microsoft.EntityFrameworkCore;
 
 namespace Batchflow.EntityFrameworkExtensions;
@@ -18,7 +19,7 @@ public static class DbContextBulkExtensions
         CancellationToken cancellationToken = default)
         where TEntity : class
     {
-        return ExecutePlaceholderAsync(dbContext, entities, BulkOperationType.Merge, configure, cancellationToken);
+        return ExecuteAsync(dbContext, entities, BulkOperationType.Merge, configure, cancellationToken);
     }
 
     /// <summary>
@@ -31,10 +32,10 @@ public static class DbContextBulkExtensions
         CancellationToken cancellationToken = default)
         where TEntity : class
     {
-        return ExecutePlaceholderAsync(dbContext, entities, BulkOperationType.Synchronize, configure, cancellationToken);
+        return ExecuteAsync(dbContext, entities, BulkOperationType.Synchronize, configure, cancellationToken);
     }
 
-    private static Task ExecutePlaceholderAsync<TEntity>(
+    private static Task ExecuteAsync<TEntity>(
         DbContext dbContext,
         IReadOnlyCollection<TEntity> entities,
         BulkOperationType operationType,
@@ -56,7 +57,10 @@ public static class DbContextBulkExtensions
         configure?.Invoke(options);
         BulkOperationOptionsValidator.Validate(options);
 
-        throw new NotImplementedException(
-            $"{operationType} is not implemented yet. The repository currently contains the initial public API and configuration primitives only.");
+        return operationType switch
+        {
+            BulkOperationType.Merge => BulkMergeExecutor.ExecuteAsync(dbContext, entities, options, cancellationToken),
+            _ => throw new NotImplementedException($"{operationType} is not implemented yet.")
+        };
     }
 }
