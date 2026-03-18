@@ -20,12 +20,35 @@ internal static class BulkMergeExecutor
         }
 
         EnsureSupportedProvider(dbContext);
+        var table = CreateTableModel<TEntity>(dbContext, options);
+        BulkModelValidator.ValidateNoDuplicateSourceKeys(table.KeyColumns, entities, nameof(BulkOperationType.Merge));
 
-        var entityType = dbContext.Model.FindEntityType(typeof(TEntity))
-            ?? throw new InvalidOperationException($"Entity type '{typeof(TEntity).Name}' is not part of the current DbContext model.");
+        await ExecuteBatchedAsync(
+            dbContext,
+            entities,
+            options.BatchSize,
+            batch => BulkMergeCommandFactory.BuildCommand(table, batch),
+            table.InsertColumns.Count,
+            0,
+            cancellationToken);
+    }
 
-        var table = BulkTableModel.Create(entityType, options);
-        var batchSize = options.BatchSize ?? entities.Count;
+    internal static async Task ExecuteBatchedAsync<TEntity>(
+        DbContext dbContext,
+        IReadOnlyCollection<TEntity> entities,
+        int? batchSize,
+        Func<IReadOnlyCollection<TEntity>, BulkCommand> commandFactory,
+        int parametersPerRow,
+        int fixedParameterCount,
+        CancellationToken cancellationToken)
+        where TEntity : class
+    {
+        if (entities.Count == 0)
+        {
+            return;
+        }
+
+        var effectiveBatchSize = BulkBatchPlanner.DetermineBatchSize(dbContext, batchSize, parametersPerRow, fixedParameterCount);
         var startedTransaction = false;
         var transaction = dbContext.Database.CurrentTransaction;
 
@@ -37,9 +60,9 @@ internal static class BulkMergeExecutor
 
         try
         {
-            foreach (var batch in entities.Chunk(batchSize))
+            foreach (var batch in entities.Chunk(effectiveBatchSize))
             {
-                var command = BuildCommand(table, batch);
+                var command = commandFactory(batch);
                 await dbContext.Database.ExecuteSqlRawAsync(command.Sql, command.Parameters, cancellationToken);
             }
 
@@ -66,85 +89,30 @@ internal static class BulkMergeExecutor
         }
     }
 
-    private static void EnsureSupportedProvider(DbContext dbContext)
+    internal static BulkTableModel CreateTableModel<TEntity>(DbContext dbContext, BulkOperationOptions options)
+        where TEntity : class
+    {
+        var entityType = dbContext.Model.FindEntityType(typeof(TEntity))
+            ?? throw new InvalidOperationException($"Entity type '{typeof(TEntity).Name}' is not part of the current DbContext model.");
+
+        var table = BulkTableModel.Create(entityType, options);
+        BulkModelValidator.ValidateConfiguredModel(entityType, table, options);
+
+        return table;
+    }
+
+    internal static void EnsureSupportedProvider(DbContext dbContext)
     {
         var provider = dbContext.Database.ProviderName;
 
         if (provider is null || (!provider.Contains("Npgsql", StringComparison.OrdinalIgnoreCase) && !provider.Contains("Sqlite", StringComparison.OrdinalIgnoreCase)))
         {
-            throw new NotSupportedException("BulkMerge currently supports PostgreSQL and SQLite providers only.");
+            throw new NotSupportedException("Bulk operations currently support PostgreSQL and SQLite providers only.");
         }
     }
-
-    private static BulkCommand BuildCommand<TEntity>(BulkTableModel table, IReadOnlyCollection<TEntity> entities)
-        where TEntity : class
-    {
-        var sql = new System.Text.StringBuilder();
-        var parameters = new List<object>();
-
-        sql.Append("INSERT INTO ");
-        sql.Append(table.QualifiedTableName);
-        sql.Append(" (");
-        sql.Append(string.Join(", ", table.InsertColumns.Select(column => column.SqlColumnName)));
-        sql.Append(") VALUES ");
-
-        var parameterIndex = 0;
-        var rowIndex = 0;
-
-        foreach (var entity in entities)
-        {
-            if (rowIndex > 0)
-            {
-                sql.Append(", ");
-            }
-
-            sql.Append('(');
-
-            for (var columnIndex = 0; columnIndex < table.InsertColumns.Count; columnIndex++)
-            {
-                if (columnIndex > 0)
-                {
-                    sql.Append(", ");
-                }
-
-                var column = table.InsertColumns[columnIndex];
-                var value = column.GetValue(entity);
-                if (column.ShouldGenerateGuid && value is Guid guid && guid == Guid.Empty)
-                {
-                    value = Guid.NewGuid();
-                    column.SetValue(entity, value);
-                }
-
-                sql.Append("@p");
-                sql.Append(parameterIndex);
-                parameters.Add(value ?? DBNull.Value);
-                parameterIndex++;
-            }
-
-            sql.Append(')');
-            rowIndex++;
-        }
-
-        sql.Append(" ON CONFLICT (");
-        sql.Append(string.Join(", ", table.KeyColumns.Select(column => column.SqlColumnName)));
-        sql.Append(") ");
-
-        if (table.UpdateColumns.Count == 0)
-        {
-            sql.Append("DO NOTHING;");
-        }
-        else
-        {
-            sql.Append("DO UPDATE SET ");
-            sql.Append(string.Join(", ", table.UpdateColumns.Select(column => $"{column.SqlColumnName} = excluded.{column.SqlColumnName}")));
-            sql.Append(';');
-        }
-
-        return new BulkCommand(sql.ToString(), parameters.ToArray());
-    }
-
-    private sealed record BulkCommand(string Sql, object[] Parameters);
 }
+
+internal sealed record BulkCommand(string Sql, object[] Parameters);
 
 internal sealed class BulkTableModel
 {
@@ -152,11 +120,13 @@ internal sealed class BulkTableModel
         string qualifiedTableName,
         IReadOnlyList<BulkColumn> insertColumns,
         IReadOnlyList<BulkColumn> keyColumns,
+        IReadOnlyList<BulkColumn> scopeColumns,
         IReadOnlyList<BulkColumn> updateColumns)
     {
         QualifiedTableName = qualifiedTableName;
         InsertColumns = insertColumns;
         KeyColumns = keyColumns;
+        ScopeColumns = scopeColumns;
         UpdateColumns = updateColumns;
     }
 
@@ -165,6 +135,8 @@ internal sealed class BulkTableModel
     public IReadOnlyList<BulkColumn> InsertColumns { get; }
 
     public IReadOnlyList<BulkColumn> KeyColumns { get; }
+
+    public IReadOnlyList<BulkColumn> ScopeColumns { get; }
 
     public IReadOnlyList<BulkColumn> UpdateColumns { get; }
 
@@ -175,15 +147,20 @@ internal sealed class BulkTableModel
         var storeObject = StoreObjectIdentifier.Table(tableName, schema);
         var properties = entityType.GetProperties()
             .Where(property => !property.IsShadowProperty() && property.PropertyInfo is not null)
+            .Where(property => property.GetColumnName(storeObject) is not null)
             .ToDictionary(property => property.Name, StringComparer.OrdinalIgnoreCase);
 
         var keyColumns = options.KeyProperties
             .Select(keyProperty => CreateColumn(keyProperty, properties, storeObject))
             .ToList();
 
+        var scopeColumns = options.ScopeProperties
+            .Select(scopeProperty => CreateColumn(scopeProperty, properties, storeObject))
+            .ToList();
+
         var insertColumns = properties.Values
             .Select(property => CreateColumn(property, storeObject))
-            .Where(column => ShouldIncludeOnInsert(column, keyColumns, options))
+            .Where(column => ShouldIncludeOnInsert(column, options))
             .ToList();
 
         foreach (var keyColumn in keyColumns)
@@ -198,17 +175,17 @@ internal sealed class BulkTableModel
             .Where(column => keyColumns.All(keyColumn => !keyColumn.Property.Name.Equals(column.Property.Name, StringComparison.OrdinalIgnoreCase)))
             .Where(column => !options.IgnoredPropertiesOnUpdate.Contains(column.Property.Name, StringComparer.OrdinalIgnoreCase))
             .Where(column => !column.Property.IsPrimaryKey())
-            .Where(column => column.Property.ValueGenerated != ValueGenerated.OnAddOrUpdate)
+            .Where(column => column.Property.GetAfterSaveBehavior() == PropertySaveBehavior.Save)
             .ToList();
 
         var qualifiedTableName = string.IsNullOrWhiteSpace(schema)
             ? QuoteIdentifier(tableName)
             : $"{QuoteIdentifier(schema)}.{QuoteIdentifier(tableName)}";
 
-        return new BulkTableModel(qualifiedTableName, insertColumns, keyColumns, updateColumns);
+        return new BulkTableModel(qualifiedTableName, insertColumns, keyColumns, scopeColumns, updateColumns);
     }
 
-    private static bool ShouldIncludeOnInsert(BulkColumn column, IReadOnlyCollection<BulkColumn> keyColumns, BulkOperationOptions options)
+    private static bool ShouldIncludeOnInsert(BulkColumn column, BulkOperationOptions options)
     {
         if (options.IgnoredPropertiesOnInsert.Contains(column.Property.Name, StringComparer.OrdinalIgnoreCase))
         {
@@ -220,12 +197,13 @@ internal sealed class BulkTableModel
             return false;
         }
 
-        if (column.Property.IsPrimaryKey() && column.Property.ClrType != typeof(Guid))
+        if (column.Property.IsPrimaryKey() && column.Property.ClrType != typeof(Guid) && column.Property.ValueGenerated == ValueGenerated.OnAdd)
         {
             return false;
         }
 
-        return true;
+        return column.Property.GetBeforeSaveBehavior() == PropertySaveBehavior.Save
+            || (column.Property.IsPrimaryKey() && column.Property.ClrType == typeof(Guid));
     }
 
     private static BulkColumn CreateColumn(string propertyName, IReadOnlyDictionary<string, IProperty> properties, StoreObjectIdentifier storeObject)
@@ -241,7 +219,8 @@ internal sealed class BulkTableModel
     private static BulkColumn CreateColumn(IProperty property, StoreObjectIdentifier storeObject)
     {
         var propertyInfo = property.PropertyInfo ?? throw new InvalidOperationException($"Property '{property.Name}' does not expose a CLR property.");
-        var columnName = property.GetColumnName(storeObject) ?? property.Name;
+        var columnName = property.GetColumnName(storeObject)
+            ?? throw new InvalidOperationException($"Property '{property.Name}' is not mapped to store object '{storeObject.Name}'.");
 
         return new BulkColumn(property, propertyInfo, QuoteIdentifier(columnName));
     }

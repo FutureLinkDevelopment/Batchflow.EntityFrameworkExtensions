@@ -35,4 +35,27 @@ public class BulkOperationOptionsValidatorTests
 
         BulkOperationOptionsValidator.Validate(options);
     }
+
+    [Fact]
+    public void Validate_Does_Not_Throw_For_Insert_Without_KeyProperties()
+    {
+        var options = new BulkOperationOptions
+        {
+            OperationType = BulkOperationType.Insert
+        };
+
+        BulkOperationOptionsValidator.Validate(options);
+    }
+
+    [Fact]
+    public void Validate_Throws_When_KeyProperties_Contain_Duplicates()
+    {
+        var options = new BulkOperationOptions();
+        options.KeyProperties.Add("ImportKey");
+        options.KeyProperties.Add("importkey");
+
+        var exception = Assert.Throws<ArgumentException>(() => BulkOperationOptionsValidator.Validate(options));
+
+        Assert.Contains("duplicate", exception.Message, StringComparison.OrdinalIgnoreCase);
+    }
 }

@@ -121,6 +121,17 @@ public class TrackedUpsertBenchmarks
             options => options.KeyProperties.Add(nameof(BulkEntity.ImportKey)));
     }
 
+    [Benchmark]
+    public async Task PackageBulkSynchronize()
+    {
+        var entities = BenchmarkDataFactory.CreateMixedBatch(BatchSize);
+
+        await using var dbContext = CreateDbContext();
+        await dbContext.BulkSynchronizeAsync(
+            entities,
+            options => options.KeyProperties.Add(nameof(BulkEntity.ImportKey)));
+    }
+
     private BulkBenchmarkDbContext CreateDbContext()
     {
         var options = new DbContextOptionsBuilder<BulkBenchmarkDbContext>()
