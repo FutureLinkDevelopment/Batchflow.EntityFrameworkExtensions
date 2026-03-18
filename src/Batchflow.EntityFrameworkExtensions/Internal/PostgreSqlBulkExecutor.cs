@@ -8,11 +8,29 @@ namespace Batchflow.EntityFrameworkExtensions.Internal;
 
 internal static class PostgreSqlBulkExecutor
 {
-    private const int MinimumRowsForStagingFastPath = 250;
+    private const int MinimumInsertRowsForStagingFastPath = 250;
+    private const int MinimumMergeRowsForStagingFastPath = 250;
+    private const int MinimumSynchronizeRowsForStagingFastPath = 250;
+    private const int MinimumDeleteRowsForStagingFastPath = 500;
 
-    public static bool ShouldUseStagingFastPath(int rowCount)
+    public static bool ShouldUseInsertStagingFastPath(int rowCount)
     {
-        return rowCount >= MinimumRowsForStagingFastPath;
+        return rowCount >= MinimumInsertRowsForStagingFastPath;
+    }
+
+    public static bool ShouldUseMergeStagingFastPath(int rowCount)
+    {
+        return rowCount >= MinimumMergeRowsForStagingFastPath;
+    }
+
+    public static bool ShouldUseSynchronizeStagingFastPath(int rowCount)
+    {
+        return rowCount >= MinimumSynchronizeRowsForStagingFastPath;
+    }
+
+    public static bool ShouldUseDeleteStagingFastPath(int rowCount)
+    {
+        return rowCount >= MinimumDeleteRowsForStagingFastPath;
     }
 
     public static Task ExecuteInsertAsync<TEntity>(

@@ -21,7 +21,7 @@ internal static class BulkSynchronizeExecutor
         BulkModelValidator.ValidateNoDuplicateSourceKeys(table.KeyColumns, entities, nameof(BulkOperationType.Synchronize));
 
         if (BulkMergeExecutor.IsPostgreSqlProvider(dbContext) &&
-            (entities.Count == 0 || PostgreSqlBulkExecutor.ShouldUseStagingFastPath(entities.Count)))
+            (entities.Count == 0 || PostgreSqlBulkExecutor.ShouldUseSynchronizeStagingFastPath(entities.Count)))
         {
             await PostgreSqlBulkExecutor.ExecuteSynchronizeAsync(dbContext, entities, table, options, cancellationToken);
             return;

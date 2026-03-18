@@ -20,7 +20,7 @@ internal static class BulkInsertExecutor
         BulkMergeExecutor.EnsureSupportedProvider(dbContext);
         var table = BulkMergeExecutor.CreateTableModel<TEntity>(dbContext, options);
 
-        if (BulkMergeExecutor.IsPostgreSqlProvider(dbContext) && PostgreSqlBulkExecutor.ShouldUseStagingFastPath(entities.Count))
+        if (BulkMergeExecutor.IsPostgreSqlProvider(dbContext) && PostgreSqlBulkExecutor.ShouldUseInsertStagingFastPath(entities.Count))
         {
             await PostgreSqlBulkExecutor.ExecuteInsertAsync(dbContext, entities, table, cancellationToken);
             return;
