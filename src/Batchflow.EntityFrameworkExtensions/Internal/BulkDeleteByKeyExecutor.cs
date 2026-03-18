@@ -19,6 +19,13 @@ internal static class BulkDeleteByKeyExecutor
 
         BulkMergeExecutor.EnsureSupportedProvider(dbContext);
         var table = BulkMergeExecutor.CreateTableModel<TEntity>(dbContext, options);
+        BulkModelValidator.ValidateNoNullSourceKeys(table.KeyColumns, entities, nameof(BulkOperationType.DeleteByKey));
+
+        if (BulkMergeExecutor.IsPostgreSqlProvider(dbContext) && PostgreSqlBulkExecutor.ShouldUseStagingFastPath(entities.Count))
+        {
+            await PostgreSqlBulkExecutor.ExecuteDeleteByKeyAsync(dbContext, entities, table, cancellationToken);
+            return;
+        }
 
         await BulkMergeExecutor.ExecuteBatchedAsync(
             dbContext,

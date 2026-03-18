@@ -32,3 +32,5 @@ dotnet run -c Release --project benchmarks/Batchflow.EntityFrameworkExtensions.B
 ```
 
 The benchmark project is a separate executable and is not included when packing `src/Batchflow.EntityFrameworkExtensions/Batchflow.EntityFrameworkExtensions.csproj`.
+
+PostgreSQL benchmarks resolve their connection from `BATCHFLOW_EFEXT_POSTGRES_CONNECTION` first, then fall back to `BatchFlow.Backend/BatchFlow.API/appsettings.Development.json`.

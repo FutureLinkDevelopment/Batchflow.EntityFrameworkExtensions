@@ -39,6 +39,30 @@ internal static class BulkModelValidator
         }
     }
 
+    public static void ValidateNoNullSourceKeys<TEntity>(
+        IReadOnlyList<BulkColumn> keyColumns,
+        IReadOnlyCollection<TEntity> entities,
+        string operationName)
+        where TEntity : class
+    {
+        if (keyColumns.Count == 0 || entities.Count == 0)
+        {
+            return;
+        }
+
+        foreach (var entity in entities)
+        {
+            foreach (var column in keyColumns)
+            {
+                if (column.GetValue(entity) is null)
+                {
+                    throw new InvalidOperationException(
+                        $"Null key value detected for {operationName}. The configured key property '{column.Property.Name}' cannot be null in the source payload.");
+                }
+            }
+        }
+    }
+
     public static void ValidateSynchronizeScope<TEntity>(
         BulkTableModel table,
         IReadOnlyCollection<TEntity> entities,

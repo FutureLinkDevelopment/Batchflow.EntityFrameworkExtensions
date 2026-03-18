@@ -186,6 +186,34 @@ public class DbContextBulkExtensionsTests
     }
 
     [Fact]
+    public async Task BulkInsertAsync_Rolls_Back_All_Batches_When_A_Later_Batch_Fails()
+    {
+        await using var connection = await OpenConnectionAsync();
+
+        await using (var setupContext = CreateDbContext(connection))
+        {
+            await setupContext.Database.EnsureCreatedAsync();
+        }
+
+        var payload = new[]
+        {
+            new FlatTestEntity { Id = Guid.NewGuid(), ImportKey = "valid", Name = "valid", ExternalNumber = "001" },
+            new FlatTestEntity { Id = Guid.NewGuid(), ImportKey = "invalid", Name = null!, ExternalNumber = "002" }
+        };
+
+        await using (var insertContext = CreateDbContext(connection))
+        {
+            await Assert.ThrowsAsync<SqliteException>(() =>
+                insertContext.BulkInsertAsync(
+                    payload,
+                    options => options.BatchSize = 1));
+        }
+
+        await using var assertionContext = CreateDbContext(connection);
+        Assert.Empty(await assertionContext.FlatEntities.ToListAsync());
+    }
+
+    [Fact]
     public async Task BulkMergeAsync_Splits_Across_Multiple_Batches_When_Parameter_Limit_Is_Exceeded()
     {
         await using var connection = await OpenConnectionAsync();
@@ -257,6 +285,60 @@ public class DbContextBulkExtensionsTests
             mergeContext.BulkMergeAsync(payload, options => options.KeyProperties.Add(nameof(FlatTestEntity.ImportKey))));
 
         Assert.Contains("duplicate source key", exception.Message, StringComparison.OrdinalIgnoreCase);
+    }
+
+    [Fact]
+    public async Task BulkMergeAsync_Throws_When_Duplicate_Keys_Span_Multiple_Batches()
+    {
+        await using var connection = await OpenConnectionAsync();
+
+        await using (var setupContext = CreateDbContext(connection))
+        {
+            await setupContext.Database.EnsureCreatedAsync();
+        }
+
+        await using var mergeContext = CreateDbContext(connection);
+
+        var payload = new[]
+        {
+            new FlatTestEntity { Id = Guid.NewGuid(), ImportKey = "dup", Name = "first", ExternalNumber = "001" },
+            new FlatTestEntity { Id = Guid.NewGuid(), ImportKey = "unique", Name = "second", ExternalNumber = "002" },
+            new FlatTestEntity { Id = Guid.NewGuid(), ImportKey = "dup", Name = "third", ExternalNumber = "003" }
+        };
+
+        var exception = await Assert.ThrowsAsync<InvalidOperationException>(() =>
+            mergeContext.BulkMergeAsync(
+                payload,
+                options =>
+                {
+                    options.KeyProperties.Add(nameof(FlatTestEntity.ImportKey));
+                    options.BatchSize = 1;
+                }));
+
+        Assert.Contains("duplicate source key", exception.Message, StringComparison.OrdinalIgnoreCase);
+    }
+
+    [Fact]
+    public async Task BulkMergeAsync_Throws_When_SourcePayload_Contains_Null_Key_Value()
+    {
+        await using var connection = await OpenConnectionAsync();
+
+        await using (var setupContext = CreateDbContext(connection))
+        {
+            await setupContext.Database.EnsureCreatedAsync();
+        }
+
+        await using var mergeContext = CreateDbContext(connection);
+
+        var payload = new[]
+        {
+            new FlatTestEntity { Id = Guid.NewGuid(), ImportKey = null!, Name = "alpha", ExternalNumber = "001" }
+        };
+
+        var exception = await Assert.ThrowsAsync<InvalidOperationException>(() =>
+            mergeContext.BulkMergeAsync(payload, options => options.KeyProperties.Add(nameof(FlatTestEntity.ImportKey))));
+
+        Assert.Contains("null key value", exception.Message, StringComparison.OrdinalIgnoreCase);
     }
 
     [Fact]

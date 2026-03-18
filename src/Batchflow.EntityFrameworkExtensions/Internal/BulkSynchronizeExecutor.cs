@@ -17,7 +17,16 @@ internal static class BulkSynchronizeExecutor
 
         var table = BulkMergeExecutor.CreateTableModel<TEntity>(dbContext, options);
         BulkModelValidator.ValidateSynchronizeScope(table, entities, options);
+        BulkModelValidator.ValidateNoNullSourceKeys(table.KeyColumns, entities, nameof(BulkOperationType.Synchronize));
         BulkModelValidator.ValidateNoDuplicateSourceKeys(table.KeyColumns, entities, nameof(BulkOperationType.Synchronize));
+
+        if (BulkMergeExecutor.IsPostgreSqlProvider(dbContext) &&
+            (entities.Count == 0 || PostgreSqlBulkExecutor.ShouldUseStagingFastPath(entities.Count)))
+        {
+            await PostgreSqlBulkExecutor.ExecuteSynchronizeAsync(dbContext, entities, table, options, cancellationToken);
+            return;
+        }
+
         var startedTransaction = false;
         var transaction = dbContext.Database.CurrentTransaction;
 
@@ -97,7 +106,10 @@ internal static class BulkSynchronizeExecutor
 
             foreach (var command in BulkDeleteCommandFactory.BuildDeleteByKeyCommands(table, keysToDelete, deleteBatchSize))
             {
-                await dbContext.Database.ExecuteSqlRawAsync(command.Sql, command.Parameters, cancellationToken);
+                await dbContext.Database.ExecuteSqlRawAsync(
+                    command.Sql,
+                    BulkMergeExecutor.CreateDbParameters(dbContext, command.Parameters),
+                    cancellationToken);
             }
 
             return;
@@ -112,7 +124,10 @@ internal static class BulkSynchronizeExecutor
 
             foreach (var command in BulkDeleteCommandFactory.BuildDeleteByKeyCommands(table, keysToDelete, deleteBatchSize))
             {
-                await dbContext.Database.ExecuteSqlRawAsync(command.Sql, command.Parameters, cancellationToken);
+                await dbContext.Database.ExecuteSqlRawAsync(
+                    command.Sql,
+                    BulkMergeExecutor.CreateDbParameters(dbContext, command.Parameters),
+                    cancellationToken);
             }
         }
     }

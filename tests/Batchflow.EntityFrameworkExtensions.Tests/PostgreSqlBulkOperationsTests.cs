@@ -88,6 +88,62 @@ public class PostgreSqlBulkOperationsTests
         Assert.Equal("alpha-one-updated", scopedEntities.Single(entity => entity.Section == "alpha" && entity.ImportKey == "1").Name);
     }
 
+    [Fact]
+    [Trait("Category", "PostgreSqlIntegration")]
+    public async Task BulkOperations_Handle_Large_PostgreSql_Payloads()
+    {
+        await using var database = await PostgreSqlTestDatabase.TryCreateAsync();
+        if (database is null)
+        {
+            return;
+        }
+
+        await using (var setupContext = CreateDbContext(database.ConnectionString))
+        {
+            await setupContext.Database.EnsureCreatedAsync();
+        }
+
+        var insertPayload = CreateFlatEntities(0, 1_200, "inserted");
+
+        await using (var insertContext = CreateDbContext(database.ConnectionString))
+        {
+            await insertContext.BulkInsertAsync(insertPayload);
+        }
+
+        var mergePayload = CreateFlatEntities(0, 1_400, "merged");
+
+        await using (var mergeContext = CreateDbContext(database.ConnectionString))
+        {
+            await mergeContext.BulkMergeAsync(
+                mergePayload,
+                options =>
+                {
+                    options.KeyProperties.Add(nameof(FlatTestEntity.ImportKey));
+                    options.BatchSize = 1;
+                });
+        }
+
+        await using var assertionContext = CreateDbContext(database.ConnectionString);
+        var entities = await assertionContext.FlatEntities.OrderBy(entity => entity.ImportKey).ToListAsync();
+
+        Assert.Equal(1_400, entities.Count);
+        Assert.Equal("merged-0", entities[0].Name);
+        Assert.Equal("merged-1399", entities[^1].Name);
+    }
+
+    private static FlatTestEntity[] CreateFlatEntities(int startInclusive, int count, string namePrefix)
+    {
+        return Enumerable.Range(startInclusive, count)
+            .Select(index => new FlatTestEntity
+            {
+                Id = Guid.NewGuid(),
+                ImportKey = $"key-{index:0000}",
+                Name = $"{namePrefix}-{index}",
+                ExternalNumber = $"ext-{index:0000}"
+            })
+            .ToArray();
+    }
+
     private static PostgreSqlBulkTestDbContext CreateDbContext(string connectionString)
     {
         var options = new DbContextOptionsBuilder<PostgreSqlBulkTestDbContext>()

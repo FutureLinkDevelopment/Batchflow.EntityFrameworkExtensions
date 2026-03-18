@@ -8,7 +8,7 @@ internal static class BulkMergeCommandFactory
         where TEntity : class
     {
         var sql = new StringBuilder();
-        var parameters = new List<object>();
+        var parameters = new List<BulkSqlParameter>();
 
         AppendInsertStatement(sql, parameters, table, entities);
         sql.Append(" ON CONFLICT (");
@@ -33,7 +33,7 @@ internal static class BulkMergeCommandFactory
         where TEntity : class
     {
         var sql = new StringBuilder();
-        var parameters = new List<object>();
+        var parameters = new List<BulkSqlParameter>();
 
         AppendInsertStatement(sql, parameters, table, entities);
         sql.Append(';');
@@ -41,7 +41,7 @@ internal static class BulkMergeCommandFactory
         return new BulkCommand(sql.ToString(), parameters.ToArray());
     }
 
-    private static void AppendInsertStatement<TEntity>(StringBuilder sql, List<object> parameters, BulkTableModel table, IReadOnlyCollection<TEntity> entities)
+    private static void AppendInsertStatement<TEntity>(StringBuilder sql, List<BulkSqlParameter> parameters, BulkTableModel table, IReadOnlyCollection<TEntity> entities)
         where TEntity : class
     {
         sql.Append("INSERT INTO ");
@@ -70,16 +70,11 @@ internal static class BulkMergeCommandFactory
                 }
 
                 var column = table.InsertColumns[columnIndex];
-                var value = column.GetValue(entity);
-                if (column.ShouldGenerateGuid && value is Guid guid && guid == Guid.Empty)
-                {
-                    value = Guid.NewGuid();
-                    column.SetValue(entity, value);
-                }
+                var value = column.GetWriteValue(entity);
 
                 sql.Append("@p");
                 sql.Append(parameterIndex);
-                parameters.Add(value ?? DBNull.Value);
+                parameters.Add(new BulkSqlParameter($"@p{parameterIndex}", value));
                 parameterIndex++;
             }
 

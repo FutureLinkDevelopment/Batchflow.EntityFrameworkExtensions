@@ -21,7 +21,14 @@ internal static class BulkMergeExecutor
 
         EnsureSupportedProvider(dbContext);
         var table = CreateTableModel<TEntity>(dbContext, options);
+        BulkModelValidator.ValidateNoNullSourceKeys(table.KeyColumns, entities, nameof(BulkOperationType.Merge));
         BulkModelValidator.ValidateNoDuplicateSourceKeys(table.KeyColumns, entities, nameof(BulkOperationType.Merge));
+
+        if (IsPostgreSqlProvider(dbContext) && PostgreSqlBulkExecutor.ShouldUseStagingFastPath(entities.Count))
+        {
+            await PostgreSqlBulkExecutor.ExecuteMergeAsync(dbContext, entities, table, cancellationToken);
+            return;
+        }
 
         await ExecuteBatchedAsync(
             dbContext,
@@ -63,7 +70,7 @@ internal static class BulkMergeExecutor
             foreach (var batch in entities.Chunk(effectiveBatchSize))
             {
                 var command = commandFactory(batch);
-                await dbContext.Database.ExecuteSqlRawAsync(command.Sql, command.Parameters, cancellationToken);
+                await dbContext.Database.ExecuteSqlRawAsync(command.Sql, CreateDbParameters(dbContext, command.Parameters), cancellationToken);
             }
 
             if (startedTransaction)
@@ -103,16 +110,41 @@ internal static class BulkMergeExecutor
 
     internal static void EnsureSupportedProvider(DbContext dbContext)
     {
-        var provider = dbContext.Database.ProviderName;
-
-        if (provider is null || (!provider.Contains("Npgsql", StringComparison.OrdinalIgnoreCase) && !provider.Contains("Sqlite", StringComparison.OrdinalIgnoreCase)))
+        if (!IsPostgreSqlProvider(dbContext) && !IsSqliteProvider(dbContext))
         {
             throw new NotSupportedException("Bulk operations currently support PostgreSQL and SQLite providers only.");
         }
     }
+
+    internal static bool IsPostgreSqlProvider(DbContext dbContext)
+    {
+        return dbContext.Database.ProviderName?.Contains("Npgsql", StringComparison.OrdinalIgnoreCase) == true;
+    }
+
+    internal static bool IsSqliteProvider(DbContext dbContext)
+    {
+        return dbContext.Database.ProviderName?.Contains("Sqlite", StringComparison.OrdinalIgnoreCase) == true;
+    }
+
+    internal static object[] CreateDbParameters(DbContext dbContext, IReadOnlyList<BulkSqlParameter> parameters)
+    {
+        using var parameterCommand = dbContext.Database.GetDbConnection().CreateCommand();
+
+        return parameters
+            .Select(parameter =>
+            {
+                var dbParameter = parameterCommand.CreateParameter();
+                dbParameter.ParameterName = parameter.Name;
+                dbParameter.Value = parameter.Value ?? DBNull.Value;
+                return (object)dbParameter;
+            })
+            .ToArray();
+    }
 }
 
-internal sealed record BulkCommand(string Sql, object[] Parameters);
+internal sealed record BulkCommand(string Sql, BulkSqlParameter[] Parameters);
+
+internal sealed record BulkSqlParameter(string Name, object? Value);
 
 internal sealed class BulkTableModel
 {
@@ -222,28 +254,49 @@ internal sealed class BulkTableModel
         var columnName = property.GetColumnName(storeObject)
             ?? throw new InvalidOperationException($"Property '{property.Name}' is not mapped to store object '{storeObject.Name}'.");
 
-        return new BulkColumn(property, propertyInfo, QuoteIdentifier(columnName));
+        return new BulkColumn(
+            property,
+            propertyInfo,
+            columnName,
+            QuoteIdentifier(columnName),
+            property.GetRelationalTypeMapping().StoreTypeNameBase);
     }
 
-    private static string QuoteIdentifier(string identifier)
+    internal static string QuoteIdentifier(string identifier)
     {
         return $"\"{identifier.Replace("\"", "\"\"") }\"";
     }
 }
 
-internal sealed class BulkColumn(IProperty property, PropertyInfo propertyInfo, string sqlColumnName)
+internal sealed class BulkColumn(IProperty property, PropertyInfo propertyInfo, string columnName, string sqlColumnName, string storeTypeName)
 {
     public IProperty Property { get; } = property;
 
     public PropertyInfo PropertyInfo { get; } = propertyInfo;
 
+    public string ColumnName { get; } = columnName;
+
     public string SqlColumnName { get; } = sqlColumnName;
+
+    public string StoreTypeName { get; } = storeTypeName;
 
     public bool ShouldGenerateGuid => Property.IsPrimaryKey() && Property.ClrType == typeof(Guid);
 
     public object? GetValue(object entity)
     {
         return PropertyInfo.GetValue(entity);
+    }
+
+    public object? GetWriteValue(object entity)
+    {
+        var value = PropertyInfo.GetValue(entity);
+        if (ShouldGenerateGuid && value is Guid guid && guid == Guid.Empty)
+        {
+            value = Guid.NewGuid();
+            PropertyInfo.SetValue(entity, value);
+        }
+
+        return value;
     }
 
     public void SetValue(object entity, object? value)

@@ -95,7 +95,7 @@ internal static class BulkDeleteCommandFactory
         bool deleteMatches)
     {
         var sql = new StringBuilder();
-        var parameters = new List<object>();
+        var parameters = new List<BulkSqlParameter>();
         var parameterIndex = 0;
 
         sql.Append("WITH source (");
@@ -120,7 +120,7 @@ internal static class BulkDeleteCommandFactory
 
                 sql.Append("@p");
                 sql.Append(parameterIndex);
-                parameters.Add(key.Values[columnIndex] ?? DBNull.Value);
+                parameters.Add(new BulkSqlParameter($"@p{parameterIndex}", key.Values[columnIndex]));
                 parameterIndex++;
             }
 
@@ -142,10 +142,9 @@ internal static class BulkDeleteCommandFactory
 
             foreach (var value in scope.Values)
             {
-                parameters.Add(value ?? DBNull.Value);
+                parameters.Add(new BulkSqlParameter($"@p{parameterIndex}", value));
+                parameterIndex++;
             }
-
-            parameterIndex += scope.Values.Count;
             sql.Append(" AND ");
         }
 

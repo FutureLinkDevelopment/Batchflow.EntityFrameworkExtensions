@@ -28,6 +28,16 @@ internal static class BenchmarkDataFactory
         return results;
     }
 
+    public static List<BulkEntity> CreateDeleteKeyBatch(int batchSize)
+    {
+        return Enumerable.Range(0, batchSize)
+            .Select(index => new BulkEntity
+            {
+                ImportKey = $"entity:{index}"
+            })
+            .ToList();
+    }
+
     private static BulkEntity CreateEntity(int index, string suffix)
     {
         return new BulkEntity
